@@ -143,6 +143,11 @@ class UNet(pl.LightningModule):
                                                       max_lr=self.hparams.max_lr,
                                                       cycle_momentum=False,
                                                       step_size_up=30000)
+        # Workaround from https://github.com/pytorch/pytorch/issues/88684#issuecomment-1307758674
+        # is needed to avoid a TypeError when pickling the state_dict
+        scheduler._scale_fn_custom = scheduler._scale_fn_ref()
+        scheduler._scale_fn_ref = None
+
         scheduler_dict = {
             'scheduler': scheduler,
             'interval': 'step'

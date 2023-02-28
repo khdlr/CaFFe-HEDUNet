@@ -1,8 +1,10 @@
 from argparse import ArgumentParser
 from models.zones_segmentation_model import ZonesUNet
 from models.front_segmentation_model import FrontUNet
+from models.hed_unet import HEDUNet
 from data_processing.glacier_zones_data import GlacierZonesDataModule
 from data_processing.glacier_front_data import GlacierFrontDataModule
+from data_processing.glacier_full_data import GlacierFullDataModule
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.loggers import TensorBoardLogger
 import sys
@@ -47,7 +49,6 @@ def main(hparams, run_number, running_mode):
         print("Taking up the training where it was left (temporary checkpoint)")
         trainer = Trainer(resume_from_checkpoint=checkpoint_dir + "temporary.ckpt",
                           callbacks=[early_stop_callback, checkpoint_callback, lr_monitor],
-                          deterministic=True,
                           gpus=1,  # Train on gpu
                           gradient_clip_val=clip_norm,
                           logger=logger,
@@ -57,7 +58,6 @@ def main(hparams, run_number, running_mode):
             # Try to overfit on some batches
             trainer = Trainer.from_argparse_args(hparams,
                                                  callbacks=[checkpoint_callback, lr_monitor],
-                                                 deterministic=True,
                                                  fast_dev_run=False,
                                                  flush_logs_every_n_steps=100,
                                                  gpus=1,
@@ -69,7 +69,6 @@ def main(hparams, run_number, running_mode):
             # Debugging mode
             trainer = Trainer.from_argparse_args(hparams,
                                                  callbacks=[checkpoint_callback, lr_monitor],
-                                                 deterministic=True,
                                                  fast_dev_run=3,
                                                  flush_logs_every_n_steps=100,
                                                  gpus=1,
@@ -79,7 +78,6 @@ def main(hparams, run_number, running_mode):
             # Training mode
             trainer = Trainer.from_argparse_args(hparams,
                                                  callbacks=[early_stop_callback, checkpoint_callback, lr_monitor],
-                                                 deterministic=True,
                                                  gpus=1,  # Train on gpu
                                                  gradient_clip_val=clip_norm,
                                                  logger=logger,
@@ -98,7 +96,16 @@ def main(hparams, run_number, running_mode):
                                             rotate=hparams.rotate,
                                             flip=hparams.flip)
         model = ZonesUNet(vars(hparams))
-
+    elif hparams.target_masks == 'both':
+        datamodule = GlacierFullDataModule(batch_size=hparams.batch_size,
+                                            augmentation=running_mode != "batch_overfit",
+                                            parent_dir=hparams.parent_dir,
+                                            bright=hparams.bright,
+                                            wrap=hparams.wrap,
+                                            noise=hparams.noise,
+                                            rotate=hparams.rotate,
+                                            flip=hparams.flip)
+        model = HEDUNet(vars(hparams))
     else:
         datamodule = GlacierFrontDataModule(batch_size=hparams.batch_size,
                                             augmentation=running_mode != "batch_overfit",
@@ -156,8 +163,8 @@ if __name__ == '__main__':
 
     print(vars(hparams))
 
-    assert hparams.target_masks == "fronts" or hparams.target_masks == "zones", \
-        "Please set --target_masks correctly. Either 'fronts' or 'zones'."
+    assert hparams.target_masks in ['fronts', 'zones', 'both'], \
+        "Please set --target_masks correctly. Either 'fronts', 'zones', or 'both'."
     assert hparams.training_mode == "training" or hparams.training_mode == "debugging" or hparams.training_mode == "batch_overfit", \
         "Please set --training_mode correctly. Either 'training' or 'debugging' or 'batch_overfit'."
 

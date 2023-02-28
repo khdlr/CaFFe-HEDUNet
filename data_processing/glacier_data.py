@@ -11,15 +11,14 @@ import pickle
 
 class GlacierDataset(Dataset):
     def __init__(self, target, mode, augmentation, parent_dir, bright, wrap, noise, rotate, flip):
-        if mode == 'train':
-            self.images_path = os.path.join(parent_dir, "data", "sar_images", "train")
-            self.targets_path = os.path.join(parent_dir, "data", target, "train")
-        elif mode == 'val':
-            self.images_path = os.path.join(parent_dir, "data", "sar_images", "val")
-            self.targets_path = os.path.join(parent_dir, "data", target, "val")
-        elif mode == 'test':
-            self.images_path = os.path.join(parent_dir, "data", "sar_images", "test")
-            self.targets_path = os.path.join(parent_dir, "data", target, "test")
+        self.target = target
+
+        self.images_path = os.path.join(parent_dir, 'data', 'sar_images', mode)
+        self.targets_path = os.path.join(parent_dir, 'data', target, mode)
+        if target == 'both':
+          # Zones as primary target, extract fronts later...
+          self.targets_path = os.path.join(parent_dir, 'data', 'zones', mode)
+
         self.imgs = os.listdir(self.images_path)
         self.labels = os.listdir(self.targets_path)
         # Sort so images and labels fit together
@@ -46,10 +45,8 @@ class GlacierDataset(Dataset):
 
         self.imgs = np.array(self.imgs)
         self.labels = np.array(self.labels)
-        tmp = self.imgs[shuffle]
-        self.imgs = tmp
-        tmp = self.labels[shuffle]
-        self.labels = tmp
+        self.imgs = self.imgs[shuffle]
+        self.labels = self.labels[shuffle]
         self.imgs = list(self.imgs)
         self.labels = list(self.labels)
 
@@ -106,6 +103,12 @@ class GlacierDataset(Dataset):
         assert img_name.split("__")[1] == label_name.split("__")[1], "image and label name don't match. Image name: " + img_name + ". Label name: " + label_name
         image = cv2.imread(os.path.join(self.images_path, img_name).__str__(), cv2.IMREAD_GRAYSCALE)
         mask = cv2.imread(os.path.join(self.targets_path, label_name).__str__(), cv2.IMREAD_GRAYSCALE)
+        if self.target == 'both':
+          mask1_path = os.path.join(self.targets_path, label_name).__str__()
+          mask2_path = mask1_path.replace('/zones/', '/fronts/').replace('zones__', 'front__')
+          mask2 = cv2.imread(mask2_path, cv2.IMREAD_GRAYSCALE)
+          mask = np.stack([mask, mask2], axis=0)
+
         x, y = self.transform(image, mask)
         return x, y, img_name, label_name
 
@@ -137,13 +140,13 @@ class GlacierDataModule(pl.LightningDataModule):
         pass
 
     def train_dataloader(self):
-        return DataLoader(self.glacier_train, batch_size=self.batch_size, num_workers=4, pin_memory=True)
+        return DataLoader(self.glacier_train, batch_size=self.batch_size, num_workers=8, pin_memory=True)
 
     def val_dataloader(self):
-        return DataLoader(self.glacier_val, batch_size=self.batch_size, num_workers=4, pin_memory=True)
+        return DataLoader(self.glacier_val, batch_size=self.batch_size, num_workers=8, pin_memory=True)
 
     def test_dataloader(self):
-        return DataLoader(self.glacier_test, batch_size=self.batch_size, num_workers=4, pin_memory=True)
+        return DataLoader(self.glacier_test, batch_size=self.batch_size, num_workers=8, pin_memory=True)
 
     def prepare_data(self, *args, **kwargs):
         pass

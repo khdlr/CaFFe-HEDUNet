@@ -27,7 +27,10 @@ class MyWrap(object):
                                                           intensity=tormentor.random.Uniform(value_range=(.0, 1.)))
         wrap = wrap_rand()
         image = wrap(image)
-        mask = wrap(target, is_mask=True)
+        if target.ndim == 3:
+          mask = torch.stack([wrap(t, is_mask=True) for t in target])
+        else:
+          mask = wrap(target, is_mask=True)
         return image, mask
 
 
