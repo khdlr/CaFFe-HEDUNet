@@ -1,4 +1,8 @@
 # Calving Fronts and Where to Find Them: 
+
+> [!NOTE]
+> This is a branch of [Nora-Go/Calving_Fronts_and_Where_to_Find_Them](https://github.com/Nora-Go/Calving_Fronts_and_Where_to_Find_Them) incorporating the [HED-UNet model](https://github.com/khdlr/HED-UNet) into the CaFFe framework.
+
 ## A Benchmark Dataset and Methodology for Automatic Glacier Calving Front Extraction from SAR Imagery
 Exact information on calving front positions of marine- or lake-terminating glaciers is a fundamental glacier variable for analyzing ongoing glacier change processes and assessing other variables like frontal ablation rates. 
 In recent years, researchers started implementing algorithms that could automatically detect the calving fronts on satellite imagery.
@@ -66,6 +70,10 @@ and stores them in the new directory `data`.
 ---
 
 Run:
+
+    python3 train.py --target_masks "both"
+
+or:
 
     python3 train.py --target_masks "zones"
 
