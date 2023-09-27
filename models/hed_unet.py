@@ -13,8 +13,8 @@ class HEDUNet(pl.LightningModule):
     super().__init__()
     self.save_hyperparameters(hparams)
 
-    self.zones_metric = metric = torchmetrics.JaccardIndex(task='multiclass', num_classes=4, average=None)
-    self.fronts_metric = torchmetrics.JaccardIndex(task='multiclass', num_classes=2, average=None)
+    self.zones_metric = torchmetrics.IoU(num_classes=4, reduction='none', absent_score=1.)
+    self.fronts_metric = torchmetrics.IoU(num_classes=2, reduction='none', absent_score=1.)
 
     stack_height = 5
     self.output_channels = 5
@@ -92,28 +92,30 @@ class HEDUNet(pl.LightningModule):
     y = y.type(mask_type)
     return y
 
-  def give_prediction_for_batch(self, batch):
+  def give_prediction_for_batch(self, batch, deep=False):
     x, y, x_name, y_names = batch
     # Safety check
     # if torch.any(torch.isnan(x)) or torch.any(torch.isinf(x)) or \
     #     torch.any(torch.isnan(y)) or torch.any(torch.isinf(y)):
     #   print(f"invalid input detected: x {x}, y {y}", file=sys.stderr)
 
-    y_hat = self.forward(x)
+    input_dev = x.device
+    x = x.to(self.device)
+    out = self.forward(x)
 
-    # Safety check
-    # if torch.any(torch.isnan(y_hat)) or torch.any(torch.isinf(y_hat)):
-    # print(f"invalid output detected: y_hat {y_hat}", file=sys.stderr)
-
+    y_hat = out[0].to(input_dev)
+    if deep:
+      deep_outs = [o.to(input_dev) for o in out[1]]
+      return y_hat, deep_outs
     return y_hat
 
   def calc_loss(self, preds, y):
     y_hat_log, deep_supervision_preds = preds
-    
+
     masks, edges = get_pyramid(y, len(deep_supervision_preds))
     main_loss = loss_level(y_hat_log, masks[0], edges[0])
     deep_supervision_losses = list(map(loss_level, deep_supervision_preds, masks, edges))
-    full_loss = torch.sum(torch.stack(sum(deep_supervision_losses, start=main_loss)))
+    full_loss = torch.sum(torch.stack(sum(deep_supervision_losses, main_loss)))
 
     loss_terms = {
       'loss': full_loss, 
@@ -123,9 +125,16 @@ class HEDUNet(pl.LightningModule):
     for i, lvl in enumerate(deep_supervision_losses):
       loss_terms[f'DS Seg Loss@{i}'] = lvl[0]
       loss_terms[f'DS Edge Loss@{i}'] = lvl[1]
-    
-    seg_metrics = self.zones_metric(y_hat_log[:, :-1].argmax(dim=1), y[:, 0])
-    edge_metrics = self.fronts_metric(y_hat_log[:, -1] >= 0, y[:, 1])
+
+    try:
+      seg_metrics = self.zones_metric(y_hat_log[:, :-1].argmax(dim=1), y[:, 0])
+      edge_metrics = self.fronts_metric(y_hat_log[:, -1] >= 0, y[:, 1])
+    except RuntimeError:
+      self.zones_metric = self.zones_metric.to(y.device)
+      self.fronts_metric = self.fronts_metric.to(y.device)
+
+      seg_metrics = self.zones_metric(y_hat_log[:, :-1].argmax(dim=1), y[:, 0])
+      edge_metrics = self.fronts_metric(y_hat_log[:, -1] >= 0, y[:, 1])
 
     loss_terms['IoU'] = torch.mean(seg_metrics)
     loss_terms['IoU NA Area'] = seg_metrics[0]
@@ -159,7 +168,7 @@ class HEDUNet(pl.LightningModule):
 
   def training_step(self, batch, batch_idx):
     x, y, x_name, y_names = batch
-    y_hat = self.give_prediction_for_batch(batch)
+    y_hat = self.give_prediction_for_batch(batch, deep=True)
     train_loss, metric = self.calc_loss(y_hat, y)
 
     self.log('train_loss', train_loss)
@@ -174,7 +183,7 @@ class HEDUNet(pl.LightningModule):
 
   def validation_step(self, batch, batch_idx):
     x, y, x_name, y_names = batch
-    y_hat = self.give_prediction_for_batch(batch)
+    y_hat = self.give_prediction_for_batch(batch, deep=True)
     val_loss, metric = self.calc_loss(y_hat, y)
     self.log('val_loss', val_loss)
     return self.make_batch_dictionary(val_loss, metric, "val_loss")
@@ -187,7 +196,7 @@ class HEDUNet(pl.LightningModule):
 
   def test_step(self, batch, batch_idx):
     x, y, x_name, y_names = batch
-    y_hat = self.give_prediction_for_batch(batch)
+    y_hat = self.give_prediction_for_batch(batch, deep=True)
     test_loss, metric = self.calc_loss(y_hat, y)
     self.log('test_loss', test_loss)
     return self.make_batch_dictionary(test_loss, metric, "test_loss")
@@ -199,7 +208,7 @@ class HEDUNet(pl.LightningModule):
     self.log_metric(outputs, "Test")
 
   def configure_optimizers(self):
-    optimizer = torch.optim.Adam(self.parameters())
+    optimizer = torch.optim.Adam(self.parameters(), self.hparams.max_lr)
     scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer=optimizer,
                             base_lr=self.hparams.base_lr,
                             max_lr=self.hparams.max_lr,
@@ -208,8 +217,8 @@ class HEDUNet(pl.LightningModule):
 
     # Workaround from https://github.com/pytorch/pytorch/issues/88684#issuecomment-1307758674
     # is needed to avoid a TypeError when pickling the state_dict
-    scheduler._scale_fn_custom = scheduler._scale_fn_ref()
-    scheduler._scale_fn_ref = None
+    # scheduler._scale_fn_custom = scheduler._scale_fn_ref()
+    # scheduler._scale_fn_ref = None
 
     scheduler_dict = {
       'scheduler': scheduler,

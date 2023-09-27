@@ -15,9 +15,12 @@ import torch
 import os
 from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+import wandb
 
 
 def main(hparams, run_number, running_mode):
+    wandb.init(project='intercomparison', config=hparams)
+    wandb.tensorboard.patch(tensorboard_x=True, pytorch=True)
     if hparams.target_masks == "zones":
         checkpoint_dir = os.path.join('checkpoints', 'zones_segmentation', 'run_' + str(run_number))
         tb_logs_dir = os.path.join('tb_logs', 'zones_segmentation', 'run_' + str(run_number))
@@ -29,7 +32,7 @@ def main(hparams, run_number, running_mode):
         early_stop_callback = EarlyStopping(monitor="avg_metric_validation", patience=30,
                                             verbose=False, mode="max", check_finite=True)
         clip_norm = 1.0
-    else:
+    elif hparams.target_masks == 'fronts':
         checkpoint_dir = os.path.join('checkpoints', 'fronts_segmentation', 'run_' + str(run_number))
         tb_logs_dir = os.path.join('tb_logs', 'fronts_segmentation', 'run_' + str(run_number))
         checkpoint_callback = ModelCheckpoint(monitor='avg_loss_validation',
@@ -37,8 +40,18 @@ def main(hparams, run_number, running_mode):
                                               filename='-{epoch:02d}-{avg_loss_validation:.2f}',
                                               mode='min',  # Here: the lower the loss the better
                                               save_top_k=1)
-        early_stop_callback = EarlyStopping(monitor="avg_loss_validation", patience=30,
-                                            verbose=False, mode="min", check_finite=True)
+        early_stop_callback = EarlyStopping(monitor="avg_metric_validation", patience=1000,
+                                            verbose=False, mode="max", check_finite=True)
+        clip_norm = 1.0
+    else:
+        checkpoint_dir = os.path.join('checkpoints', 'both_segmentation', 'run_' + str(run_number))
+        tb_logs_dir = os.path.join('tb_logs', 'both_segmentation', 'run_' + str(run_number))
+        checkpoint_callback = ModelCheckpoint(monitor='avg_loss_validation',
+                                              dirpath=checkpoint_dir,
+                                              filename='-{epoch:02d}-{avg_loss_validation:.2f}',
+                                              mode='min',  # Here: the lower the loss the better
+                                              save_top_k=1,
+                                              save_last=True)
         clip_norm = 1.0
 
     logger = TensorBoardLogger(tb_logs_dir, name="log", default_hp_metric=False)
@@ -48,7 +61,7 @@ def main(hparams, run_number, running_mode):
     if os.path.isfile(checkpoint_dir + "temporary.ckpt"):
         print("Taking up the training where it was left (temporary checkpoint)")
         trainer = Trainer(resume_from_checkpoint=checkpoint_dir + "temporary.ckpt",
-                          callbacks=[early_stop_callback, checkpoint_callback, lr_monitor],
+                          callbacks=[checkpoint_callback, lr_monitor],
                           gpus=1,  # Train on gpu
                           gradient_clip_val=clip_norm,
                           logger=logger,
@@ -77,7 +90,7 @@ def main(hparams, run_number, running_mode):
         elif running_mode == "training":
             # Training mode
             trainer = Trainer.from_argparse_args(hparams,
-                                                 callbacks=[early_stop_callback, checkpoint_callback, lr_monitor],
+                                                 callbacks=[checkpoint_callback, lr_monitor],
                                                  gpus=1,  # Train on gpu
                                                  gradient_clip_val=clip_norm,
                                                  logger=logger,

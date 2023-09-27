@@ -46,7 +46,7 @@ def reconstruct_from_patches_and_binarize(src_directory, dst_directory, modality
     :return: prediction (image = height x width)
     """
 
-    assert modality == "fronts" or modality == "zones", "Modality must either be 'fronts' or 'zones'."
+    assert modality in ("fronts", "zones", 'both')
 
     patches = os.listdir(src_directory)
     list_of_names = []
@@ -78,9 +78,11 @@ def reconstruct_from_patches_and_binarize(src_directory, dst_directory, modality
                 class_probabilities_array = pickle.load(fp)
                 assert class_probabilities_array.ndim == 3, "Patch " + file_name + " has not enough dimensions (3 needed). Found: " + str(class_probabilities_array.ndim)
                 if modality == "fronts":
-                    assert len(class_probabilities_array) <= 2, "Patch " + file_name + " has too many classes (<2 needed). Found: " + str(len(class_probabilities_array))
-                else:
-                    assert len(class_probabilities_array) <= 4, "Patch " + file_name + " has too many classes (<4 needed). Found: " + str(len(class_probabilities_array))
+                  assert len(class_probabilities_array) <= 2, "Patch " + file_name + " has too many classes (<2 needed). Found: " + str(len(class_probabilities_array))
+                elif modality == 'zones':
+                  assert len(class_probabilities_array) <= 4, "Patch " + file_name + " has too many classes (<4 needed). Found: " + str(len(class_probabilities_array))
+                elif modality == 'both':
+                  pass
                 patches_for_image.append(class_probabilities_array)
             irow.append(int(os.path.split(file_name)[1][:-4].split("_")[-2]))
             icol.append(int(os.path.split(file_name)[1][:-4].split("_")[-1]))
@@ -105,10 +107,10 @@ def reconstruct_from_patches_and_binarize(src_directory, dst_directory, modality
         ######################################################################################################
         # Cut Padding
         ######################################################################################################
-        if modality == "zones":
+        if modality in ("zones", 'both'):
             class_probabilities_complete_image = np.array(class_probabilities_complete_image)
             class_probabilities_complete_image = class_probabilities_complete_image[:, :-padded_bottom, :-padded_right]
-        else:
+        elif modality == 'fronts':
             class_probabilities_complete_image = rearrange(class_probabilities_complete_image, '1 h w -> h w')
             class_probabilities_complete_image = np.array(class_probabilities_complete_image)
             class_probabilities_complete_image = class_probabilities_complete_image[:-padded_bottom, :-padded_right]
@@ -119,11 +121,17 @@ def reconstruct_from_patches_and_binarize(src_directory, dst_directory, modality
         if modality == "zones":
             # Choose class with highest probability as prediction
             prediction = np.argmax(class_probabilities_complete_image, axis=0)
-        else:
+        elif modality == 'fronts':
             # Take a threshold to get the class
             prediction = class_probabilities_complete_image
             prediction[prediction > threshold_front_prob] = 1
             prediction[prediction <= threshold_front_prob] = 0
+        elif modality == 'both':
+            # Choose class with highest probability as prediction
+            zones = np.argmax(class_probabilities_complete_image[:-1], axis=0)
+            fronts = class_probabilities_complete_image[-1]
+            fronts[fronts > threshold_front_prob] = 1
+            fronts[fronts <= threshold_front_prob] = 0
 
         # #####################################################################################################
         #  Convert [0, 1] to [0, 255] range
@@ -132,14 +140,23 @@ def reconstruct_from_patches_and_binarize(src_directory, dst_directory, modality
             prediction[prediction == 0] = 0
             prediction[prediction == 1] = 255
             assert (is_subarray(np.unique(prediction), [0, 255])), "Unique front values are not correct"
-        else:
+        elif modality == 'zones':
             prediction[prediction == 0] = 0
             prediction[prediction == 1] = 64
             prediction[prediction == 2] = 127
             prediction[prediction == 3] = 254
             assert (is_subarray(np.unique(prediction), [0, 64, 127, 254])), "Unique zone values are not correct"
+        elif modality == 'both':
+            fronts = 255 * fronts
+            zones[zones == 0] = 0
+            zones[zones == 1] = 64
+            zones[zones == 2] = 127
+            zones[zones == 3] = 254
+            cv2.imwrite(os.path.join(dst_directory, name + '.zones.png'), zones)
+            cv2.imwrite(os.path.join(dst_directory, name + '.fronts.png'), fronts)
 
-        cv2.imwrite(os.path.join(dst_directory, name + '.png'), prediction)
+        if modality != 'both':
+          cv2.imwrite(os.path.join(dst_directory, name + '.png'), prediction)
 
 
 def get_gaussian(patch_size, sigma_scale=1. / 8) -> np.ndarray:
